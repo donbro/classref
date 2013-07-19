@@ -1,3 +1,6 @@
+#!/Users/donb/projects/VENV/scrapy/bin/python
+# encoding: utf-8
+
 # Define your item pipelines here
 #
 # Don't forget to add your pipeline to the ITEM_PIPELINES setting
@@ -23,6 +26,36 @@ class ClassrefPipeline(object):
         #  'seeAlso': [u'\u2013\xa0run', u'\u2013\xa0terminate:'],
         #  'type': 'classMethod'
 
+
+    def exec_sql(self, sql_query, print_query=True, print_result=True):
+        print "sql_query is %r" % sql_query
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute( sql_query )    
+            self.conn.commit()
+            r = [z for z in cursor] 
+        except self.conn.ProgrammingError as err:
+            if err.message == "no results to fetch":
+                return None
+        finally:
+            cursor.close()    
+        print "r is", r
+        return r
+
+    def get_string_id(self, s, print_query=True, print_result=True):
+        sql_query = "insert into strings (string) values( '" + s + "' )"
+        r = self.exec_sql(sql_query, print_query=True, print_result=True)
+        return r[0][0]
+ 
+    def get_names_id(self, name_str_id, superclass_str_id):
+
+        sql_query =  "insert into names_ids (string_id , super_name_id) values ( '" + name_str_id + "' , '" + superclass_str_id + "');"
+        r = self.exec_sql(sql_query)
+        sql_query =  "select from names_ids where string_id = '" +  name_str_id + "' and  super_name_id = '" + superclass_str_id +  "');"
+        r = self.exec_sql(sql_query)
+        return r[0][0]
+
+ 
     def process_item(self, item, spider):
         print "process_item(self, %r, %r)" % ( item, spider )
         #return item
@@ -33,53 +66,42 @@ class ClassrefPipeline(object):
         r = self.exec_sql(sql)
         print "new relation id is", r
 
-        # get string ids for the *labels* of each element of our item
+        # create relation/triple for (class, method, type) in three steps:
 
-        sql_query = "insert into strings (string) values( '" + 'class name' + "' )"
-        r = self.exec_sql(sql_query)
-        class_name_label_id = r[0][0]
+        # (1) get string id for the *label* of each element of our scraped item
 
-        sql_query = "insert into strings (string) values( '" + 'method_name' + "' )"
-        r = self.exec_sql(sql_query)
-        method_name_label_id = r[0][0]
+        class_name_label_id  = self.get_string_id('class name')
+        method_name_label_id = self.get_string_id('method name')
+        method_type_label_id = self.get_string_id('method type')
 
-        sql_query = "insert into strings (string) values( '" + 'type' + "' )"
-        r = self.exec_sql(sql_query)
-        method_type_label_id = r[0][0]
+        abstract_label_id = self.get_string_id('abstract')
 
-        sql_query = "insert into strings (string) values( '" + 'abstract' + "' )"
-        r = self.exec_sql(sql_query)
-        abstract_label_id = r[0][0]
+        # (2) get string id for the values of each element. if a string exists we will get existing string.
 
+        class_name_str_id = self.get_string_id( item['class_name'][0] )
+        method_name_str_id = self.get_string_id( item['method_name'][0] )
+        method_type_str_id = self.get_string_id( item['type'] )  # this element is a string (not a list like all the others)
 
-        # get string ids for each string, if a string exists we will get existing string
+        abstract_str_id = self.get_string_id( item['abstract'][0] )  
 
-        sql_query = "insert into strings (string) values( '" + item['class_name'][0] + "' )"
-        r = self.exec_sql(sql_query)
-        class_name_str_id = r[0][0]
+        # (3) create names record for each pair (value, label_name) 
 
         sql_query =  "insert into names_ids (string_id , super_name_id) values ( '" + class_name_str_id + "' , '" + class_name_label_id + "');"
         r = self.exec_sql(sql_query)
 
+        # insert column into relation, ie, insert id for our name record , id for our relatoin) into relations
+        # table schema is relations ( name_id , rel_id  )
 
-        sql_query = "insert into strings (string) values( '" + item['method_name'][0] + "' )"
+        sql_query =  "insert into relations (name_id , rel_id) values ( '" + method_type_str_id + "' , '" + method_type_label_id + "');"
         r = self.exec_sql(sql_query)
-        method_name_str_id = r[0][0]
+
 
         sql_query =  "insert into names_ids (string_id , super_name_id) values ( '" + method_name_str_id + "' , '" + method_name_label_id + "');"
         r = self.exec_sql(sql_query)
 
-        sql_query = "insert into strings (string) values( '" + item['type'][0] + "' )"
-        r = self.exec_sql(sql_query)
-        method_type_str_id = r[0][0]
-
         sql_query =  "insert into names_ids (string_id , super_name_id) values ( '" + method_type_str_id + "' , '" + method_type_label_id + "');"
         r = self.exec_sql(sql_query)
 
-
-        sql_query = "insert into strings (string) values( '" + item['abstract'][0] + "' )"
-        r = self.exec_sql(sql_query)
-        abstract_str_id = r[0][0]
 
         sql_query =  "insert into names_ids (string_id , super_name_id) values ( '" + abstract_str_id + "' , '" + abstract_label_id + "');"
         r = self.exec_sql(sql_query)
@@ -99,20 +121,6 @@ class ClassrefPipeline(object):
 
         return item
 
-    def exec_sql(self, sql_query):
-        print "sql_query is %r" % sql_query
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute( sql_query )    
-            self.conn.commit()
-            r = [z for z in cursor] 
-        except self.conn.ProgrammingError as err:
-            if err.message == "no results to fetch":
-                return None
-        finally:
-            cursor.close()    
-        print "r is", r
-        return r
 
 
 #    def process_item(self, item, spider):
@@ -146,3 +154,29 @@ class ClassrefPipeline(object):
 #                else:
 #                        print '[DOUBLE]'
 
+
+
+
+
+import unittest
+
+class untitledTests(unittest.TestCase):
+    def setUp(self):
+        print "hello"
+        self.C = ClassrefPipeline()
+        pass
+
+    def test_010_do_parse_args(self):
+        print "self.C is", self.C
+        
+    def test_015_do_parse_args(self):
+        sql_query = "select max(str_id) from strings"
+        self.C.exec_sql(sql_query, print_query=True, print_result=True)
+        
+    def test_020_do_parse_args(self):
+        str_id = self.C.get_string_id('hello wonko!')
+        print "str_id is", str_id
+
+
+if __name__ == '__main__':
+    unittest.main()
